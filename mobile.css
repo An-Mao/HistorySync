@@ -1,0 +1,13 @@
+@media (max-width: 560px) {
+  *, *::before, *::after { min-width: 0; }
+  html, body { max-width: 100%; overflow-x: hidden; }
+  main { padding: 0 max(14px, env(safe-area-inset-left)) calc(28px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-right)); }
+  .app-header { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .date-card { align-items: flex-end; gap: 6px; padding: 10px; }
+  .date-card label { min-width: 0; flex: 1 1 0; }
+  .icon-button { flex: 0 0 38px; padding-left: 0; padding-right: 0; }
+  .date-tabs { margin: 0 -2px; }
+  .site-content > a, .visits a span, .history-meta { overflow-wrap: anywhere; white-space: normal; }
+  .history-meta { text-overflow: clip; }
+  .toolbar button { min-width: 0; padding-left: 8px; padding-right: 8px; }
+}
