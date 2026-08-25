@@ -1,0 +1,8 @@
+const status = document.querySelector('#status');
+const buttons = [...document.querySelectorAll('#download, #upload')];
+chrome.storage.local.get(['lastSyncAt', 'lastSyncResult', 'syncDays']).then(({ lastSyncAt, lastSyncResult, syncDays }) => { document.querySelector('#last').textContent = lastSyncAt ? `上次同步：${new Date(lastSyncAt).toLocaleString()}（${lastSyncResult || ''}）` : (lastSyncResult || '尚未同步'); document.querySelector('#download').textContent = `下载最近 ${syncDays || 7} 天`; document.querySelector('#upload').textContent = `上传最近 ${syncDays || 7} 天`; });
+async function run(type) { buttons.forEach((button) => { button.disabled = true; }); status.textContent = type === 'download' ? '正在下载并导入…' : '正在上传并合并…'; const result = await chrome.runtime.sendMessage({ type }); if (!result.ok) status.textContent = `失败：${result.error}`; else if (type === 'download') { const imported = result.result.reduce((sum, item) => sum + item.imported, 0); const received = result.result.reduce((sum, item) => sum + item.count, 0); const failed = result.result.reduce((sum, item) => sum + item.failed, 0); status.textContent = `下载 ${received} 条；已导入 Chrome ${imported} 条${failed ? `；失败 ${failed} 条` : ''}`; } else status.textContent = `已上传并合并 ${result.result.length} 天`; buttons.forEach((button) => { button.disabled = false; }); }
+document.querySelector('#download').addEventListener('click', () => run('download'));
+document.querySelector('#upload').addEventListener('click', () => run('upload'));
+document.querySelector('#history').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('history.html') }));
+document.querySelector('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "历史记录 WebDAV 同步",
+  "version": "1.0.0",
+  "description": "按天备份并通过 WebDAV 同步 Chrome 浏览历史。",
+  "permissions": ["history", "storage", "tabs", "alarms", "idle"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "打开同步历史记录" },
+  "options_page": "options.html"
+}

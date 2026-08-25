@@ -1,0 +1,5 @@
+const form = document.querySelector('#settings');
+const status = document.querySelector('#status');
+const defaults = { webdavUrl: '', remotePath: 'chrome-history', username: '', password: '', encryptionPassword: '', deviceId: '', dateTabsPosition: 'top', importToNativeHistory: false, autoDownloadOnEmpty: true, syncDays: 7, syncIntervalMinutes: 60 };
+chrome.storage.local.get(defaults).then((data) => Object.entries(data).forEach(([key, value]) => { if (!form.elements[key]) return; if (form.elements[key].type === 'checkbox') form.elements[key].checked = Boolean(value); else form.elements[key].value = value; }));
+form.addEventListener('submit', async (event) => { event.preventDefault(); const data = Object.fromEntries(new FormData(form)); data.importToNativeHistory = form.elements.importToNativeHistory.checked; data.autoDownloadOnEmpty = form.elements.autoDownloadOnEmpty.checked; data.syncDays = Number(data.syncDays); data.syncIntervalMinutes = Number(data.syncIntervalMinutes); await chrome.storage.local.set(data); await chrome.runtime.sendMessage({ type: 'configureAlarm' }); status.textContent = '已保存'; setTimeout(() => { status.textContent = ''; }, 2000); });
