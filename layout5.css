@@ -1,0 +1,1 @@
+.calendar-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:14px; } .calendar-footer #storageInfo { flex:1; text-align:center; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

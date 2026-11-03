@@ -7,7 +7,7 @@
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "打开同步历史记录" },
-  "options_page": "options.html",
+  "options_page": "options3.html",
   "icons": {
     "16": "icon/history-sync-16x.png",
     "32": "icon/history-sync-32x.png",

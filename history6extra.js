@@ -1,0 +1,1 @@
+document.querySelector('#searchToggle')?.addEventListener('click', () => { const controls = document.querySelector('#topControls'); controls.classList.toggle('search-open'); if (controls.classList.contains('search-open')) document.querySelector('#search').focus(); });

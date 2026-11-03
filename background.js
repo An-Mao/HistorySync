@@ -6,6 +6,18 @@ const DEFAULTS = {
   importToNativeHistory: false,
   autoDownloadOnEmpty: true,
   dateTabsPosition: 'top',
+  listMode: 'pages',
+  themeMode: 'system',
+  themePreset: 'violet',
+  customTheme: null,
+  backgroundType: 'solid',
+  backgroundValue: '#f7f5ff',
+  backgroundBase: '#7c3aed',
+  visualEffect: 'none',
+  language: 'auto',
+  openPluginHistoryOnNative: false,
+  installedAt: 0,
+  configUpdatedAt: 0,
   deviceId: '',
   remotePath: 'chrome-history',
   syncDays: 7,
@@ -34,6 +46,7 @@ const normalizeRecord = (item) => ({
 
 async function getSettings() {
   const settings = { ...DEFAULTS, ...(await chrome.storage.local.get(DEFAULTS)) };
+  if (!settings.installedAt) { settings.installedAt = Date.now(); await chrome.storage.local.set({ installedAt: settings.installedAt }); }
   if (!settings.deviceId) {
     settings.deviceId = `Chrome-${crypto.randomUUID().slice(0, 8)}`;
     await chrome.storage.local.set({ deviceId: settings.deviceId });
@@ -118,6 +131,11 @@ function remoteFile(settings, day) {
   const path = settings.remotePath.replace(/^\/+|\/+$/g, '');
   return `${base}/${path ? `${path}/` : ''}${day}.json`;
 }
+function configFile(settings) {
+  const base = settings.webdavUrl.replace(/\/+$/, '');
+  const path = settings.remotePath.replace(/^\/+|\/+$/g, '');
+  return `${base}/${path ? `${path}/` : ''}user.config.json`;
+}
 async function ensureRemoteDirectory(settings) {
   const base = settings.webdavUrl.replace(/\/+$/, '');
   const parts = settings.remotePath.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
@@ -155,16 +173,12 @@ async function encodeRemote(records, settings) {
   return JSON.stringify({ version: 1, encryption: 'AES-GCM', kdf: 'PBKDF2-SHA-256', iterations: 250000, salt: toBase64(salt), iv: toBase64(iv), ciphertext: toBase64(ciphertext) });
 }
 async function decodeRemote(payload, settings) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.records)) return payload.records;
-  if (!payload?.ciphertext || !payload?.salt || !payload?.iv) throw new Error('远端文件格式无效');
+  if (!payload?.ciphertext || !payload?.salt || !payload?.iv) return payload;
   if (!settings.encryptionPassword) throw new Error('远端数据已加密，请填写加密密码');
   try {
     const key = await encryptionKey(settings.encryptionPassword, fromBase64(payload.salt));
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(payload.iv) }, key, fromBase64(payload.ciphertext));
-    const records = JSON.parse(decoder.decode(plaintext));
-    if (!Array.isArray(records)) throw new Error('解密后的数据格式无效');
-    return records;
+    return JSON.parse(decoder.decode(plaintext));
   } catch (error) {
     throw new Error('无法解密远端数据：加密密码可能不正确，或文件已损坏');
   }
@@ -183,7 +197,33 @@ async function fetchRemote(url, settings) {
   const response = await fetch(url, { headers: authHeaders(settings) });
   if (response.status === 404) return [];
   if (!response.ok) throw new Error(`读取远端失败（HTTP ${response.status}）`);
-  return decodeRemote(await response.json(), settings);
+  const payload = await decodeRemote(await response.json(), settings);
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.records)) return payload.records;
+  throw new Error('远端历史文件格式无效');
+}
+const SYNCED_CONFIG_KEYS = ['autoDownloadOnEmpty', 'dateTabsPosition', 'listMode', 'themeMode', 'themePreset', 'customTheme', 'backgroundType', 'backgroundValue', 'backgroundBase', 'visualEffect', 'language', 'openPluginHistoryOnNative', 'syncDays', 'syncIntervalMinutes'];
+function syncedConfig(settings) {
+  return Object.fromEntries(SYNCED_CONFIG_KEYS.map((key) => [key, settings[key]]));
+}
+async function fetchUserConfig(settings) {
+  const response = await fetch(configFile(settings), { headers: authHeaders(settings) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`读取同步配置失败（HTTP ${response.status}）`);
+  const config = await decodeRemote(await response.json(), settings);
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : null;
+}
+async function pullUserConfig(settings) {
+  const remote = await fetchUserConfig(settings);
+  if (!remote || Number(remote.updatedAt) <= Number(settings.configUpdatedAt)) return false;
+  const next = Object.fromEntries(SYNCED_CONFIG_KEYS.filter((key) => key in remote).map((key) => [key, remote[key]]));
+  await chrome.storage.local.set({ ...next, configUpdatedAt: Number(remote.updatedAt) });
+  return true;
+}
+async function pushUserConfig(settings) {
+  const payload = { version: 1, updatedAt: Number(settings.configUpdatedAt) || Date.now(), ...syncedConfig(settings) };
+  const response = await fetch(configFile(settings), { method: 'PUT', headers: authHeaders(settings), body: await encodeRemote(payload, settings) });
+  if (!response.ok) throw new Error(`上传同步配置失败（HTTP ${response.status}）`);
 }
 async function importRemoteToChrome(records) {
   let added = 0;
@@ -213,6 +253,7 @@ async function upload() {
   await importChromeHistory(days);
   await closeActivePage();
   await ensureRemoteDirectory(settings);
+  await pushUserConfig(settings);
   const results = [];
   for (let i = 0; i < days; i += 1) {
     const day = dayKey(Date.now() - i * DAY_MS);
@@ -226,7 +267,7 @@ async function upload() {
     await chrome.storage.local.set({ [key]: merged });
     results.push({ day, count: merged.length });
   }
-  await chrome.storage.local.set({ lastSyncAt: Date.now(), lastSyncResult: `已上传并合并 ${results.length} 天` });
+  await chrome.storage.local.set({ lastSyncAt: Date.now(), lastSyncAutomatic: false, lastSyncResult: `已上传并合并 ${results.length} 天` });
   return results;
 }
 async function download() {
@@ -237,9 +278,10 @@ async function download() {
     const day = dayKey(Date.now() - i * DAY_MS);
     results.push(await downloadDay(day, settings));
   }
+  await pullUserConfig(settings);
   const imported = results.reduce((total, result) => total + result.imported, 0);
   const failed = results.reduce((total, result) => total + result.failed, 0);
-  await chrome.storage.local.set({ lastSyncAt: Date.now(), lastSyncResult: `已下载 ${results.length} 天，导入 Chrome ${imported} 条${failed ? `，失败 ${failed} 条` : ''}` });
+  await chrome.storage.local.set({ lastSyncAt: Date.now(), lastSyncAutomatic: false, lastSyncResult: `已下载 ${results.length} 天，导入 Chrome ${imported} 条${failed ? `，失败 ${failed} 条` : ''}` });
   return results;
 }
 async function downloadDay(day, providedSettings) {
@@ -271,12 +313,22 @@ async function loadDay(day) {
     records = (await chrome.storage.local.get(key))[key] || [];
     downloaded = true;
   }
-  return { day, records, downloaded, deviceId: settings.deviceId, dateTabsPosition: settings.dateTabsPosition };
+  const all = await chrome.storage.local.get(null);
+  const storedDays = Object.keys(all).filter((key) => key.startsWith('history:')).length;
+  const installedDays = Math.max(1, Math.ceil((Date.now() - settings.installedAt) / DAY_MS));
+  return { day, records, downloaded, storedDays, installedDays, deviceId: settings.deviceId, dateTabsPosition: settings.dateTabsPosition, listMode: settings.listMode, themeMode: settings.themeMode, themePreset: settings.themePreset, customTheme: settings.customTheme, backgroundType: settings.backgroundType, backgroundValue: settings.backgroundValue, backgroundBase: settings.backgroundBase, visualEffect: settings.visualEffect, language: settings.language, lastSyncAt: settings.lastSyncAt, lastSyncAutomatic: settings.lastSyncAutomatic, lastSyncResult: settings.lastSyncResult };
+}
+async function searchHistory(term) {
+  const query = String(term || '').trim().toLowerCase();
+  const data = await chrome.storage.local.get(null);
+  const records = Object.entries(data).filter(([key, value]) => key.startsWith('history:') && Array.isArray(value)).flatMap(([, value]) => value).filter((record) => !query || `${record.title} ${record.url}`.toLowerCase().includes(query));
+  return { records: mergeRecords([], records), deviceId: (await getSettings()).deviceId };
 }
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.deviceId) currentDeviceId = changes.deviceId.newValue || ''; });
-async function sync() {
+async function sync(automatic = false) {
   const downloaded = await download();
   const uploaded = await upload();
+  await chrome.storage.local.set({ lastSyncAutomatic: automatic });
   return { downloaded, uploaded };
 }
 
@@ -286,13 +338,15 @@ async function configureAlarm() {
 }
 chrome.runtime.onInstalled.addListener(configureAlarm);
 chrome.runtime.onStartup.addListener(configureAlarm);
-chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === 'historySync') sync().catch((error) => chrome.storage.local.set({ lastSyncResult: error.message })); });
-chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: chrome.runtime.getURL('history.html') }));
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === 'historySync') sync(true).catch((error) => chrome.storage.local.set({ lastSyncResult: error.message })); });
+chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: chrome.runtime.getURL('history6.html') }));
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo) => { if (changeInfo.url === 'chrome://history/' && (await getSettings()).openPluginHistoryOnNative) chrome.tabs.create({ url: chrome.runtime.getURL('history6.html') }); });
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'sync') sync().then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
   if (message.type === 'upload') upload().then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
   if (message.type === 'download') download().then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
   if (message.type === 'loadDay') loadDay(message.day).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
+  if (message.type === 'searchHistory') searchHistory(message.term).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
   if (message.type === 'configureAlarm') configureAlarm().then(() => sendResponse({ ok: true }));
   return true;
 });
